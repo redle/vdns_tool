@@ -1,0 +1,209 @@
+#!/bin/bash
+
+VHOST_AVAILABLE=./vhost/site-available
+VHOST_ENABLE=./vhost/site-enabled
+ZONE_FILE=./dns/domain.zone
+DOMAIN_DEFAULT="faculdadeuniao.net.br"
+VDNS=./vdns
+
+# vdns error code
+VHOST_ERROR=3
+
+# color
+txtred='\e[0;31m'
+txtgrn='\e[0;32m'
+txtylw='\e[0;33m'
+txtrst='\e[0m'
+BRed='\e[1;31m'
+BGreen='\e[1;32m'
+BWhite='\e[1;37m'
+
+red() {
+	echo -e "${txtred}$*${txtrst}"
+}
+
+bred() {
+	echo -e "${BRed}$*${txtrst}"
+}
+
+green() {
+	echo -e "${txtgrn}$*${txtrst}"
+}
+
+bgreen() {
+	echo -e "${BGreen}$*${txtrst}"
+}
+
+yellow() {
+	echo -e "${txtylw}$*${txtrst}"
+}
+
+create_vhost() {
+	$VDNS --domain $DOMAIN_DEFAULT --add $1
+
+	if [ $? -eq $VHOST_ERROR ]; then
+		red "VHOST \"$1\" already added"
+	fi
+	
+	FILE_VHOST="${VHOST_AVAILABLE}/${1}.conf"
+	
+	if [ ! -e $FILE_VHOST ]; then
+		green "Creating VHOST \"$1\""
+		print_vhost $1 > $FILE_VHOST
+	fi
+
+	check_vhost $1
+
+	if [ $? -eq 0 ]; then
+		green "Enabling VHOST \"$1\" in Apache!"
+		ln -s $FILE_VHOST $VHOST_ENABLE
+	fi
+
+	check_cname $1
+
+	if [ $? -eq 1 ]; then
+		yellow "CNAME \"$1\" already added in DNS!"
+		return 1
+	fi
+
+	green "DNS Zone with vhost \"$1\" created!"
+	print_dns > $ZONE_FILE
+	
+	return 0
+}
+
+delete_vhost() {
+	echo "DELETE VHOST"
+}
+
+print_vhost() {
+	$VDNS --domain $DOMAIN_DEFAULT --vhost $1
+}
+
+check_vhost() {
+	FILE_VHOST="${VHOST_ENABLE}/${1}.conf"
+	
+	if [ -L $FILE_VHOST ]; then
+		return 1	
+	fi
+
+	return 0
+}
+
+check_cname() {
+	cat $ZONE_FILE 2> /dev/null | grep ^$1 -q
+
+	if [ $? -eq 0 ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+print_dns() {
+	$VDNS --domain $DOMAIN_DEFAULT --print zone
+}
+
+check_configuration() {
+	VHOSTS=`$VDNS --domain $DOMAIN_DEFAULT --vhost all_name`
+
+	for VHOST in $VHOSTS; do
+		create_vhost $VHOST
+		echo ""
+	done
+}
+
+reload_service() {
+	echo ""
+        bred "####################################################"
+        bred "# Apache and Bind going to restart, Are you sure?  #"
+        bred "####################################################"
+	read -p "(y/n)" -n 1 -r
+	echo 
+
+	if [[ $REPLY =~ ^[Yy]$ ]]
+	then
+		echo "service apache2 restart"
+		echo "service bind9 restart"	
+	fi
+}
+
+show_cname() {
+        bgreen "####################################################"
+        bgreen "# Configuration                                    #"
+        bgreen "####################################################"
+
+	VHOSTS=`$VDNS --domain $DOMAIN_DEFAULT --vhost all_name`
+
+	for HOST in $VHOSTS; do
+
+		check_cname $HOST
+
+		if [ $? -eq 1 ]; then
+			CNAME="${txtgrn}OK${txtrst}"
+		else
+			CNAME="${txtred}ERROR${txtrst}"
+		fi
+	
+		check_vhost $HOST
+
+		if [ $? -eq 1 ]; then
+			VHOST="${txtgrn}OK${txtrst}"
+		else
+			VHOST="${txtred}ERROR${txtrst}"
+		fi
+
+		echo -e "  > ${BRed}${HOST}${txtrst}: vhost:${VHOST} dns:${CNAME}"
+	done
+
+	echo -e "\n"
+}
+
+usage() {
+	echo "Usage"
+	echo "$0 add <vhost>"
+	echo "$0 del <vhost>"
+}
+
+case $1 in
+	add)
+		if [ $# -lt 2 ]; then
+			usage
+			exit 1
+		fi
+
+		shift
+		create_vhost $1
+
+		if [ $? -eq 0 ]; then
+			reload_service
+		fi
+	;;
+
+	del)
+		delete_vhost
+	;;
+
+	print)
+		if [ $# -lt 2 ]; then
+			usage
+			exit 1
+		fi
+
+		shift
+		print_vhost $1	
+	;;
+
+	force)
+		check_configuration
+		reload_service
+	;;
+
+	show)
+		show_cname
+	;;
+
+	*)
+		usage
+	;;
+esac

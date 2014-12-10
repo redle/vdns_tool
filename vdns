@@ -1,0 +1,384 @@
+#!/usr/bin/env python3
+
+import sys
+import re
+import getopt
+import sqlite3
+
+db = 0
+db_name = "data/domain.db"
+progname = "vdns"
+
+def db_connect():
+    global db
+    db = sqlite3.connect(db_name)
+
+def db_close():
+    global db
+    db.close()
+
+def db_populate():
+    global db
+
+    db_connect()
+
+    print("Create tables: { domain, record } ");
+
+    # Get a cursor object
+    cursor = db.cursor()
+    cursor.execute('''CREATE TABLE domain(id INTEGER PRIMARY KEY, name TEXT)''')
+    cursor.execute('''CREATE TABLE record(id INTEGER PRIMARY KEY, did INTEGER, name TEXT, type TEXT, data TEXT)''')
+    cursor.execute('''CREATE TABLE vhost(id INTEGER PRIMARY KEY, did INTEGER, rid INTEGER)''')
+    db.commit()
+
+    db_close()
+
+def get_domain_id(name):
+    global db
+    
+    cursor = db.cursor()
+
+    cursor.execute('''SELECT id
+                         FROM domain
+                      WHERE name LIKE ?
+    ''', (name,))
+
+    id = 0
+
+    for row in cursor:
+        id = row[0]
+        break
+
+    return id
+
+def get_domain(domain_id):
+    global db
+    
+    cursor = db.cursor()
+
+    cursor.execute('''SELECT id, name
+                         FROM domain
+                      WHERE id = ? 
+    ''', (domain_id,))
+
+    all_rows = cursor.fetchall()
+
+    return all_rows
+
+def get_record_id(domain, record):
+    global db
+    
+    cursor = db.cursor()
+
+    cursor.execute('''SELECT id
+                         FROM record
+                      WHERE name LIKE ? and did = ?
+    ''', (record,domain,))
+
+    id = 0
+
+    for row in cursor:
+        id = row[0]
+        break
+
+    return id
+
+def get_record(domain_id, type):
+    global db
+    
+    cursor = db.cursor()
+
+    cursor.execute('''SELECT d.name, r.name, r.data 
+                      FROM domain as d
+                         JOIN record as r ON r.did = d.id
+                      WHERE did = ? AND type LIKE ?
+    ''', (domain_id,type,))
+
+    all_rows = []
+
+    for row in cursor:
+        name = row[1]
+        if name.endswith('.'):
+
+            if len(name) == 1:
+                name=""
+
+            name = "%s%s." % (name, row[0])
+
+        data = row[2]
+        if data.endswith('.'):
+
+            if len(data) == 1:
+                data=""
+
+            data = "%s%s." % (data, row[0])
+
+        all_rows.append([name, data])
+
+    return all_rows
+
+def get_vhost_id(domain_id, record_id):
+    global db
+    
+    cursor = db.cursor()
+
+    cursor.execute('''SELECT id
+                         FROM vhost
+                      WHERE did = ? and rid = ?
+    ''', (domain_id, record_id))
+
+    id = 0
+
+    for row in cursor:
+        id = row[0]
+        break
+
+    return id
+
+def create_record(domain_id, name, type, data):
+    global db
+
+    cursor = db.cursor()
+
+    cursor.execute('''INSERT INTO record (id, did, name, type, data)
+                        VALUES(NULL, ?, ?, ?, ?)
+    ''', (domain_id, name, type, data))
+
+    db.commit()
+
+    record_id = get_record_id(domain_id, name)
+
+    return record_id
+
+def create_vhost(domain, vhost):
+    global db
+
+    db_connect()
+
+    domain_id = get_domain_id(domain)
+
+    if domain_id == 0:
+        print ("This domain doesnt exists, create it first!")
+        sys.exit(2)
+    
+    record_id = get_record_id(domain_id, vhost)
+
+    if record_id == 0:
+        record_id = create_record (domain_id, vhost, 'CNAME', 'www')
+
+        if record_id <= 0:
+            print ("Error create vhost")
+            db_close()
+            sys.exit(1)
+
+    vhost_id = get_vhost_id(domain_id, record_id)
+
+    if vhost_id > 0:
+        sys.exit(3)
+
+    cursor = db.cursor()
+
+    cursor.execute('''INSERT INTO vhost VALUES(NULL, ?, ?)
+    ''', (domain_id, record_id))
+
+    db.commit()
+
+    db_close
+
+def delete_vhost(domain, vhost):
+    global db
+
+    db_connect()
+
+    domain_id = get_domain_id(domain)
+
+    if domain_id == 0:
+        print ("This domain doesnt exists, create it first!")
+        sys.exit(2)
+    
+    record_id = get_record_id(domain_id, vhost)
+
+    if record_id == 0:
+        db_close()
+        sys.exit(1)
+
+    vhost_id = get_vhost_id(domain_id, record_id)
+
+    cursor = db.cursor()
+
+    print("%s %s" %  (domain, vhost))
+
+    cursor.execute('''DELETE FROM record WHERE id = ?
+    ''', (record_id,))
+
+    if vhost_id > 0:
+        cursor.execute('''DELETE FROM vhost WHERE id = ?
+        ''', (vhost_id,))
+
+    db.commit()
+
+    db_close
+
+def print_dns_zone(domain_id):
+    
+    domains = get_domain(domain_id)
+
+    if len(domains) == 0:
+        print ("This domain doesnt exist!");
+        return 1
+
+    domain_id = domains[0][0]
+    domain = domains[0][1]
+
+    print ("$TTL    604800")
+    print ("@       IN      SOA     ns1.%s. admin.%s. (" % (domain, domain))
+    print ("                       20141130         ; Serial")
+    print ("                         604800         ; Refresh")
+    print ("                          86400         ; Retry")
+    print ("                        2419200         ; Expire")
+    print ("                         604800 )       ; Negative Cache TTL")
+
+    for type in [ 'NS', 'A', 'CNAME' ]:
+        records = get_record(domain_id, type)
+
+        if len(records) == 0:
+            continue
+
+        print (";")
+
+        for record in records:
+            print ("%s IN %s %s" % (record[0], type, record[1]))
+
+def print_vhost(domain_id, option):
+    global db
+
+    cursor = db.cursor()
+
+    condition = "%"
+    
+    if "all" not in (option):
+        condition = option
+
+    cursor.execute('''SELECT d.name, r.name, r.data 
+                      FROM vhost as v
+                         JOIN domain as d ON d.id = v.did
+                         JOIN record as r ON r.id = v.rid
+                      WHERE v.did = ? AND r.name LIKE ?
+    ''', (domain_id, condition,))
+    
+    name_only = ""
+
+    for row in cursor:
+        domain = row[0]
+        record = row[1]
+        
+        if option == 'all_name':
+            name_only = "%s%s " % (name_only, row[1])
+            continue
+
+        print ('<VirtualHost *:80>')
+        print ("    ServerAdmin webmaster@%s" % domain)
+        print ("        ServerName faculdadeuniao.net.br")
+        print ("        ServerAlias %s.%s" % (record, domain))
+        print ("    DocumentRoot /var/www/cliente/public_html/") 
+        print ("    ErrorLog ${APACHE_LOG_DIR}/error.log")
+        print ("    CustomLog ${APACHE_LOG_DIR}/access.log combined")
+        print ("</VirtualHost>")
+
+        # This improve output 
+        print ("")
+
+    if option == 'all_name':
+        print ("%s" % name_only)
+
+def show_configuration(domain, option):
+    db_connect()
+
+    domain_id = get_domain_id(domain)
+
+    if domain_id == 0:
+        print ("This domain doesnt exists, create it first!")
+        return -1
+
+    if option == "zone":
+        print_dns_zone(domain_id)
+    elif option == "vhost":
+        print_vhost(domain_id, 'all')
+    else:
+        print_vhost(domain_id, option)
+
+    db_close()
+
+def usage():
+    print ("Usage")
+    print ("%s --domain <domain name> --add <vhost name> - Create new vhost in domain" % progname)
+    print ("%s --print <zone|vhost> - Show configuration of zone or vhost" % progname)
+    print ("%s --vhost - Show vhost name" % progname)
+    print ("%s --help - Show this message" % progname);
+
+    sys.exit()
+
+def main(argv):
+    try:                                
+        opts, args = getopt.getopt(argv, "ha:s:d:p:", ["help", "add=", "populate", "print=", "domain=", "vhost=", "del="])
+    except getopt.GetoptError:          
+        usage()                         
+
+    domain = ""
+    vhost = ""
+    del_opt = False
+    add_opt = False
+    print_option = ""
+    print_vhost = False
+    print_vhost_arg = ""
+    
+    for opt, arg in opts:
+
+        if opt == "--help":
+            usage()
+        elif opt in ("--populate"):
+            print("populate opt")
+            db_populate()
+            sys.exit()
+        elif opt in ("-a", "--add"):
+            vhost = arg
+            add_opt = True
+        elif opt in ("--del"):
+            vhost = arg
+            del_opt = True
+        elif opt == ("--print"):
+            if arg in ("vhost", "zone"):
+                print_option = arg
+            else:
+                usage()
+        elif opt in ("-d", "--domain"):
+            domain = arg
+        elif opt in ("--vhost"):
+            print_vhost = True
+            print_vhost_arg = arg
+    
+    if len(domain) == 0:
+        usage()
+    
+    if len(vhost) > 0:
+
+        if add_opt:
+            create_vhost(domain, vhost)
+            sys.exit(0)
+
+        if del_opt:
+            delete_vhost(domain, vhost)
+            sys.exit(0)
+    
+    if len(print_option) > 0:
+        show_configuration(domain, print_option)
+        sys.exit(0)
+
+    if print_vhost == True:
+        show_configuration(domain, print_vhost_arg)
+        sys.exit(0)
+
+    usage()
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
