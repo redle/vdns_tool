@@ -1,10 +1,12 @@
 #!/bin/bash
 
-VHOST_AVAILABLE=./vhost/site-available
-VHOST_ENABLE=./vhost/site-enabled
-ZONE_FILE=./dns/domain.zone
-DOMAIN_DEFAULT="faculdadeuniao.net.br"
-VDNS=./vdns
+#VHOST_AVAILABLE=./vhost/site-available
+VHOST_AVAILABLE=/etc/apache2/sites-available/
+#VHOST_ENABLE=./vhost/site-enabled
+VHOST_ENABLE=/etc/apache2/sites-enabled/
+ZONE_FILE=/etc/bind/zones/db.domain
+DOMAIN_DEFAULT="makito.com.br"
+VDNS=`which vdns`
 
 # vdns error code
 VHOST_ERROR=3
@@ -43,6 +45,8 @@ create_vhost() {
 
 	if [ $? -eq $VHOST_ERROR ]; then
 		red "VHOST \"$1\" already added"
+	else
+		green "DNS Zone with vhost \"$1\" created!"
 	fi
 	
 	FILE_VHOST="${VHOST_AVAILABLE}/${1}.conf"
@@ -56,24 +60,38 @@ create_vhost() {
 
 	if [ $? -eq 0 ]; then
 		green "Enabling VHOST \"$1\" in Apache!"
-		ln -s $FILE_VHOST $VHOST_ENABLE
+		a2ensite $1
 	fi
 
-	check_cname $1
+	#check_cname $1
 
-	if [ $? -eq 1 ]; then
-		yellow "CNAME \"$1\" already added in DNS!"
-		return 1
-	fi
+	#if [ $? -eq 1 ]; then
+	#	yellow "CNAME \"$1\" already added in DNS!"
+	#	return 1
+	#fi
 
-	green "DNS Zone with vhost \"$1\" created!"
-	print_dns > $ZONE_FILE
-	
 	return 0
 }
 
 delete_vhost() {
-	echo "DELETE VHOST"
+
+	echo ""
+        bred "############################################"
+        bred "# VHOST $1 going to delete, Are you sure?  #"
+        bred "############################################"
+	read -p "(y/n)" -n 1 -r
+	echo 
+
+	if [[ $REPLY =~ ^[Yy]$ ]]
+	then
+		echo "DELETING VHOST $1"
+		$VDNS --domain $DOMAIN_DEFAULT --del $1
+		a2dissite $1
+
+		return 0
+	fi
+
+	return 1
 }
 
 print_vhost() {
@@ -100,8 +118,8 @@ check_cname() {
 	return 0
 }
 
-print_dns() {
-	$VDNS --domain $DOMAIN_DEFAULT --print zone
+create_dns_file() {
+	$VDNS --domain $DOMAIN_DEFAULT --print zone > $ZONE_FILE
 }
 
 check_configuration() {
@@ -123,8 +141,8 @@ reload_service() {
 
 	if [[ $REPLY =~ ^[Yy]$ ]]
 	then
-		echo "service apache2 restart"
-		echo "service bind9 restart"	
+		service apache2 reload
+		service bind9 restart
 	fi
 }
 
@@ -161,8 +179,10 @@ show_cname() {
 
 usage() {
 	echo "Usage"
-	echo "$0 add <vhost>"
-	echo "$0 del <vhost>"
+	echo "$0 add <vhost>            Create a new vhost"
+	echo "$0 del <vhost>            Delete a vhost"
+	echo "$0 force                  Force recreate configuration files"
+	echo "$0 show                   Print vhost registered"
 }
 
 case $1 in
@@ -176,15 +196,27 @@ case $1 in
 		create_vhost $1
 
 		if [ $? -eq 0 ]; then
+			create_dns_file
 			reload_service
 		fi
 	;;
 
 	del)
-		delete_vhost
+		if [ $# -lt 2 ]; then
+			usage
+			exit 1
+		fi
+
+		shift
+		delete_vhost $1
+
+		if [ $? -eq 0 ]; then
+			create_dns_file
+			reload_service
+		fi
 	;;
 
-	print)
+	print_vhost)
 		if [ $# -lt 2 ]; then
 			usage
 			exit 1
@@ -196,6 +228,7 @@ case $1 in
 
 	force)
 		check_configuration
+		create_dns_file
 		reload_service
 	;;
 

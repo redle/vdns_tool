@@ -6,7 +6,7 @@ import getopt
 import sqlite3
 
 db = 0
-db_name = "data/domain.db"
+db_name = "/opt/vdns/data/domain.db"
 progname = "vdns"
 
 def db_connect():
@@ -98,20 +98,22 @@ def get_record(domain_id, type):
 
     for row in cursor:
         name = row[1]
-        if name.endswith('.'):
+
+        if name.endswith('+'):
 
             if len(name) == 1:
                 name=""
 
-            name = "%s%s." % (name, row[0])
+            name = "%s%s." % (name.replace('+','.'), row[0])
 
         data = row[2]
-        if data.endswith('.'):
+
+        if data.endswith('+'):
 
             if len(data) == 1:
                 data=""
 
-            data = "%s%s." % (data, row[0])
+            data = "%s%s." % (data.replace('+', '.'), row[0])
 
         all_rows.append([name, data])
 
@@ -206,8 +208,6 @@ def delete_vhost(domain, vhost):
 
     cursor = db.cursor()
 
-    print("%s %s" %  (domain, vhost))
-
     cursor.execute('''DELETE FROM record WHERE id = ?
     ''', (record_id,))
 
@@ -238,16 +238,16 @@ def print_dns_zone(domain_id):
     print ("                        2419200         ; Expire")
     print ("                         604800 )       ; Negative Cache TTL")
 
-    for type in [ 'NS', 'A', 'CNAME' ]:
+    for type in [ 'MX', 'NS', 'A', 'CNAME' ]:
         records = get_record(domain_id, type)
 
         if len(records) == 0:
             continue
-
-        print (";")
+	
+        print ("\n; %s records" % type)
 
         for record in records:
-            print ("%s IN %s %s" % (record[0], type, record[1]))
+            print ("%s IN %s %s" % (record[0].ljust(20), type.ljust(7), record[1]))
 
 def print_vhost(domain_id, option):
     global db
@@ -278,11 +278,11 @@ def print_vhost(domain_id, option):
 
         print ('<VirtualHost *:80>')
         print ("    ServerAdmin webmaster@%s" % domain)
-        print ("        ServerName faculdadeuniao.net.br")
+        print ("        ServerName %s" % domain)
         print ("        ServerAlias %s.%s" % (record, domain))
-        print ("    DocumentRoot /var/www/cliente/public_html/") 
-        print ("    ErrorLog ${APACHE_LOG_DIR}/error.log")
-        print ("    CustomLog ${APACHE_LOG_DIR}/access.log combined")
+        print ("    DocumentRoot /var/www/cliente/") 
+        print ("    ErrorLog ${APACHE_LOG_DIR}/error-%s.log" % record)
+        print ("    CustomLog ${APACHE_LOG_DIR}/access-%s.log combined" % record)
         print ("</VirtualHost>")
 
         # This improve output 
@@ -312,8 +312,9 @@ def show_configuration(domain, option):
 def usage():
     print ("Usage")
     print ("%s --domain <domain name> --add <vhost name> - Create new vhost in domain" % progname)
-    print ("%s --print <zone|vhost> - Show configuration of zone or vhost" % progname)
-    print ("%s --vhost - Show vhost name" % progname)
+    print ("%s --domain <domain name> --del <vhost name> - Delete vhost from domain" % progname)
+    print ("%s --domain <domain name> --print <zone|vhost> - Show configuration of zone or vhost" % progname)
+    print ("%s --domain <domain name> --vhost <name> - Show vhost name" % progname)
     print ("%s --help - Show this message" % progname);
 
     sys.exit()
