@@ -8,6 +8,8 @@ import sqlite3
 db = 0
 db_name = "/opt/vdns/data/domain.db"
 progname = "vdns"
+document_root_default = "/data/www"
+document_client_default = "cliente"
 
 def db_connect():
     global db
@@ -152,7 +154,7 @@ def create_record(domain_id, name, type, data):
 
     return record_id
 
-def create_vhost(domain, vhost):
+def create_vhost(domain, vhost, document_root):
     global db
 
     db_connect()
@@ -164,7 +166,7 @@ def create_vhost(domain, vhost):
         sys.exit(2)
     
     record_id = get_record_id(domain_id, vhost)
-
+    
     if record_id == 0:
         record_id = create_record (domain_id, vhost, 'CNAME', 'www')
 
@@ -180,8 +182,8 @@ def create_vhost(domain, vhost):
 
     cursor = db.cursor()
 
-    cursor.execute('''INSERT INTO vhost VALUES(NULL, ?, ?)
-    ''', (domain_id, record_id))
+    cursor.execute('''INSERT INTO vhost VALUES(NULL, ?, ?, ?)
+    ''', (domain_id, record_id, document_root))
 
     db.commit()
 
@@ -259,7 +261,7 @@ def print_vhost(domain_id, option):
     if "all" not in (option):
         condition = option
 
-    cursor.execute('''SELECT d.name, r.name, r.data 
+    cursor.execute('''SELECT d.name, r.name, r.data, v.doc_root 
                       FROM vhost as v
                          JOIN domain as d ON d.id = v.did
                          JOIN record as r ON r.id = v.rid
@@ -276,11 +278,20 @@ def print_vhost(domain_id, option):
             name_only = "%s%s " % (name_only, row[1])
             continue
 
+        document_root = document_root_default
+
+        if len(row[3]):
+            document_client = row[3]
+        else:
+            document_client = document_client_default
+
+        document_root = "%s/%s" % (document_root_default, document_client)
+
         print ('<VirtualHost *:80>')
         print ("    ServerAdmin webmaster@%s" % domain)
         print ("        ServerName %s" % domain)
         print ("        ServerAlias %s.%s" % (record, domain))
-        print ("    DocumentRoot /var/www/cliente/") 
+        print ("    DocumentRoot %s" % document_root) 
         print ("    ErrorLog ${APACHE_LOG_DIR}/error-%s.log" % record)
         print ("    CustomLog ${APACHE_LOG_DIR}/access-%s.log combined" % record)
         print ("</VirtualHost>")
@@ -312,6 +323,7 @@ def show_configuration(domain, option):
 def usage():
     print ("Usage")
     print ("%s --domain <domain name> --add <vhost name> - Create new vhost in domain" % progname)
+    print ("%s --domain <domain name> --add <vhost name> --docroot <folder> - Create new vhost in domain and specified folder" % progname)
     print ("%s --domain <domain name> --del <vhost name> - Delete vhost from domain" % progname)
     print ("%s --domain <domain name> --print <zone|vhost> - Show configuration of zone or vhost" % progname)
     print ("%s --domain <domain name> --vhost <name> - Show vhost name" % progname)
@@ -321,7 +333,7 @@ def usage():
 
 def main(argv):
     try:                                
-        opts, args = getopt.getopt(argv, "ha:s:d:p:", ["help", "add=", "populate", "print=", "domain=", "vhost=", "del="])
+        opts, args = getopt.getopt(argv, "ha:s:d:p:", ["help", "add=", "populate", "print=", "domain=", "vhost=", "del=", "docroot="])
     except getopt.GetoptError:          
         usage()                         
 
@@ -332,6 +344,7 @@ def main(argv):
     print_option = ""
     print_vhost = False
     print_vhost_arg = ""
+    document_root = ""
     
     for opt, arg in opts:
 
@@ -357,6 +370,8 @@ def main(argv):
         elif opt in ("--vhost"):
             print_vhost = True
             print_vhost_arg = arg
+        elif opt in ("--docroot"):
+            document_root = arg
     
     if len(domain) == 0:
         usage()
@@ -364,7 +379,7 @@ def main(argv):
     if len(vhost) > 0:
 
         if add_opt:
-            create_vhost(domain, vhost)
+            create_vhost(domain, vhost, document_root)
             sys.exit(0)
 
         if del_opt:

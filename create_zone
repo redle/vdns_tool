@@ -1,9 +1,7 @@
 #!/bin/bash
 
-#VHOST_AVAILABLE=./vhost/site-available
-VHOST_AVAILABLE=/etc/apache2/sites-available/
-#VHOST_ENABLE=./vhost/site-enabled
-VHOST_ENABLE=/etc/apache2/sites-enabled/
+VHOST_AVAILABLE=/etc/apache2/sites-available
+VHOST_ENABLE=/etc/apache2/sites-enabled
 ZONE_FILE=/etc/bind/zones/db.domain
 DOMAIN_DEFAULT="makito.com.br"
 VDNS=`which vdns`
@@ -41,7 +39,14 @@ yellow() {
 }
 
 create_vhost() {
-	$VDNS --domain $DOMAIN_DEFAULT --add $1
+
+	DOCUMENT_ROOT=""
+
+	if [ $# -gt 1 ]; then
+		DOCUMENT_ROOT="--docroot $2"
+	fi
+
+	$VDNS --domain $DOMAIN_DEFAULT --add $1 $DOCUMENT_ROOT
 
 	if [ $? -eq $VHOST_ERROR ]; then
 		red "VHOST \"$1\" already added"
@@ -54,6 +59,14 @@ create_vhost() {
 	if [ ! -e $FILE_VHOST ]; then
 		green "Creating VHOST \"$1\""
 		print_vhost $1 > $FILE_VHOST
+
+	fi
+
+	FOLDER_VHOST=`cat $FILE_VHOST | grep DocumentRoot | tr -d ' ' | cut -f2- -d'/'`
+
+	if [ ! -d $FOLDER_VHOST ]; then
+		mkdir -p /$FOLDER_VHOST
+		chown www-data.www-data /$FOLDER_VHOST
 	fi
 
 	check_vhost $1
@@ -179,10 +192,11 @@ show_cname() {
 
 usage() {
 	echo "Usage"
-	echo "$0 add <vhost>            Create a new vhost"
-	echo "$0 del <vhost>            Delete a vhost"
-	echo "$0 force                  Force recreate configuration files"
-	echo "$0 show                   Print vhost registered"
+	echo "$0 add <vhost>                 Create a new vhost"
+	echo "$0 add <vhost> <document root> Create a new vhost"
+	echo "$0 del <vhost>                 Delete a vhost"
+	echo "$0 force                       Force recreate configuration files"
+	echo "$0 show                        Print vhost registered"
 }
 
 case $1 in
@@ -193,7 +207,8 @@ case $1 in
 		fi
 
 		shift
-		create_vhost $1
+
+		create_vhost $*
 
 		if [ $? -eq 0 ]; then
 			create_dns_file
