@@ -3,8 +3,13 @@
 VHOST_AVAILABLE=/etc/apache2/sites-available
 VHOST_ENABLE=/etc/apache2/sites-enabled
 ZONE_FILE=/etc/bind/zones/db.domain
-DOMAIN_DEFAULT="makito.com.br"
+DOMAIN_DEFAULT=""
 VDNS=`which vdns`
+
+if [ "$DOMAIN_DEFAULT" == ""  ]; then
+	echo "SET YOU DOMAIN DEFAULT VARIABLE"
+	exit 1
+fi
 
 # vdns error code
 VHOST_ERROR=3
